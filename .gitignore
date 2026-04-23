@@ -1,6 +1,7 @@
 # Environment variables — NEVER commit these
 .env
 .env.local
+.env.example
 .env.production
 
 # Python
