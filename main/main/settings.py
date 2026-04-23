@@ -23,6 +23,10 @@ def _split(value: str | None) -> list[str]:
 FRONTEND_URLS = _split(os.getenv('FRONTEND_URLS'))
 
 ALLOWED_HOSTS = _split(os.getenv('ALLOWED_HOSTS'))
+# Render automatically injects RENDER_EXTERNAL_HOSTNAME — include it if present
+_render_host = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+if _render_host and _render_host not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(_render_host)
 if DEBUG and not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ['*']
 
