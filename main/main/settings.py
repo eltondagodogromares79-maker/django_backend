@@ -26,7 +26,9 @@ ALLOWED_HOSTS = _split(os.getenv('ALLOWED_HOSTS'))
 if DEBUG and not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ['*']
 
-CORS_ALLOWED_ORIGINS = FRONTEND_URLS
+# CORS — frontend URLs + any extra origins (e.g. chat server)
+_extra_cors = _split(os.getenv('EXTRA_CORS_URLS'))
+CORS_ALLOWED_ORIGINS = list(dict.fromkeys(FRONTEND_URLS + _extra_cors))
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     'accept',
