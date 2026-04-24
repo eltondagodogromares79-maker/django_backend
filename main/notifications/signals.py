@@ -6,21 +6,7 @@ from learning_materials.models import LearningMaterial
 from quizzes.models import Quiz, QuizAttempt
 from sections.models import StudentSubject, Enrollment
 from .models import Notification
-from .utils import push_notification
-
-
-def _serialize_notification(notification):
-    return {
-        'id': str(notification.id),
-        'kind': notification.kind,
-        'title': notification.title,
-        'body': notification.body,
-        'target_id': str(notification.target_id),
-        'section_subject_id': str(notification.section_subject_id) if notification.section_subject_id else None,
-        'is_read': notification.is_read,
-        'read_at': notification.read_at.isoformat() if notification.read_at else None,
-        'created_at': notification.created_at.isoformat(),
-    }
+from .utils import push_notification, serialize_notification
 
 
 def _student_user_ids(section_subject):
@@ -75,7 +61,7 @@ def _create_notifications(kind, section_subject, title, target_id, body=None):
             target_id=target_id,
             section_subject=section_subject,
         )
-        push_notification(user_id, _serialize_notification(notification))
+        push_notification(user_id, serialize_notification(notification))
 
 
 def _create_teacher_notifications(kind, section_subject, title, target_id, body=None):
@@ -91,7 +77,7 @@ def _create_teacher_notifications(kind, section_subject, title, target_id, body=
             target_id=target_id,
             section_subject=section_subject,
         )
-        push_notification(user_id, _serialize_notification(notification))
+        push_notification(user_id, serialize_notification(notification))
 
 
 @receiver(post_save, sender=Assignment)
@@ -142,7 +128,7 @@ def notify_attendance_session(sender, instance, created, **kwargs):
             target_id=instance.id,
             section_subject=instance.section_subject,
         )
-        push_notification(user_id, _serialize_notification(notification))
+        push_notification(user_id, serialize_notification(notification))
 
 
 @receiver(post_save, sender=AssignmentSubmission)

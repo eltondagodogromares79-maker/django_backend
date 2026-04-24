@@ -48,10 +48,15 @@ def _get_student_scope(user: CustomUser):
     student = Student.objects.filter(user=user).first()
     enrollment = _get_student_current_or_latest_enrollment(student)
     if not enrollment or not enrollment.section_id:
-        return None, None
+        return None, None, None
     section_id = str(enrollment.section_id)
     program_id = str(enrollment.section.year_level.program_id) if enrollment.section and enrollment.section.year_level_id else None
-    return section_id, program_id
+    department_id = (
+        str(enrollment.section.year_level.program.department_id)
+        if enrollment.section and enrollment.section.year_level_id and enrollment.section.year_level.program_id
+        else None
+    )
+    return section_id, program_id, department_id
 
 
 def _get_instructor_scope(user: CustomUser):
@@ -82,11 +87,11 @@ def get_allowed_chat_contacts_queryset(user: CustomUser):
         return CustomUser.objects.filter(is_active=True).exclude(id=user.id)
 
     if user.role == 'student':
-        section_id, program_id = _get_student_scope(user)
-        if not section_id and not program_id:
+        section_id, program_id, department_id = _get_student_scope(user)
+        if not section_id and not program_id and not department_id:
             return CustomUser.objects.none()
 
-        if section_id or program_id:
+        if section_id or program_id or department_id:
             from django.db.models import Q
 
             enrollment_q = Q()
@@ -94,18 +99,24 @@ def get_allowed_chat_contacts_queryset(user: CustomUser):
                 enrollment_q |= Q(section_id=section_id)
             if program_id:
                 enrollment_q |= Q(section__year_level__program_id=program_id)
+            if department_id:
+                enrollment_q |= Q(section__year_level__program__department_id=department_id)
 
             section_subject_q = Q()
             if section_id:
                 section_subject_q |= Q(section_id=section_id)
             if program_id:
                 section_subject_q |= Q(section__year_level__program_id=program_id)
+            if department_id:
+                section_subject_q |= Q(section__year_level__program__department_id=department_id)
 
             section_q = Q()
             if section_id:
                 section_q |= Q(id=section_id)
             if program_id:
                 section_q |= Q(year_level__program_id=program_id)
+            if department_id:
+                section_q |= Q(year_level__program__department_id=department_id)
 
             student_ids = Enrollment.objects.filter(is_current=True).filter(enrollment_q).values_list('student__user_id', flat=True)
             instructor_ids = SectionSubject.objects.filter(section_subject_q, instructor__isnull=False).values_list('instructor__user_id', flat=True)

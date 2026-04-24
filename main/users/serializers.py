@@ -52,11 +52,25 @@ class UserProfileSerializer(SanitizedModelSerializer):
         ]
         read_only_fields = ['id', 'role', 'date_joined', 'must_change_password']
 
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get('request')
+        if request and getattr(request.user, 'role', None) == CustomUser.Role.STUDENT:
+            allowed_student_fields = {
+                'email',
+                'phone_number',
+                'address',
+                'profile_picture',
+                'emergency_contact_name',
+                'emergency_contact_phone',
+                'emergency_contact_relationship',
+            }
+            for name, field in fields.items():
+                if name not in allowed_student_fields and name not in self.Meta.read_only_fields:
+                    field.read_only = True
+        return fields
+
     def update(self, instance, validated_data):
-        student_data = {}
-        for field in ['emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship']:
-            key = f'student_profile.{field}'
-            # DRF puts source-mapped fields under the source path
         # Extract nested student_profile data
         student_profile_data = validated_data.pop('student_profile', {})
         instance = super().update(instance, validated_data)
