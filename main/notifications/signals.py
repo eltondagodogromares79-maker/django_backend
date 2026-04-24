@@ -6,7 +6,7 @@ from learning_materials.models import LearningMaterial
 from quizzes.models import Quiz, QuizAttempt
 from sections.models import StudentSubject, Enrollment
 from .models import Notification
-from .utils import push_notification, serialize_notification
+from .utils import push_notifications, serialize_notification
 
 
 def _student_user_ids(section_subject):
@@ -52,6 +52,7 @@ def _create_notifications(kind, section_subject, title, target_id, body=None):
     if not section_subject:
         return
     body_text = body if body is not None else _build_context(section_subject)
+    events = []
     for user_id in _student_user_ids(section_subject):
         notification = Notification.objects.create(
             user_id=user_id,
@@ -61,13 +62,15 @@ def _create_notifications(kind, section_subject, title, target_id, body=None):
             target_id=target_id,
             section_subject=section_subject,
         )
-        push_notification(user_id, serialize_notification(notification))
+        events.append((user_id, serialize_notification(notification)))
+    push_notifications(events)
 
 
 def _create_teacher_notifications(kind, section_subject, title, target_id, body=None):
     if not section_subject:
         return
     body_text = body if body is not None else _build_context(section_subject)
+    events = []
     for user_id in _teacher_user_ids(section_subject):
         notification = Notification.objects.create(
             user_id=user_id,
@@ -77,7 +80,8 @@ def _create_teacher_notifications(kind, section_subject, title, target_id, body=
             target_id=target_id,
             section_subject=section_subject,
         )
-        push_notification(user_id, serialize_notification(notification))
+        events.append((user_id, serialize_notification(notification)))
+    push_notifications(events)
 
 
 @receiver(post_save, sender=Assignment)
@@ -106,19 +110,21 @@ def notify_quiz(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=AttendanceSession)
 def notify_attendance_session(sender, instance, created, **kwargs):
-    if not created:
+    # Bug 4 fix: only notify when the session goes live, not on creation
+    if not instance.is_live:
         return
     if getattr(instance, 'is_online_class', False):
         title = instance.title or 'Online class started'
         kind = 'online_class'
     else:
-        title = instance.title or 'Attendance session scheduled'
+        title = instance.title or 'Attendance session started'
         kind = 'attendance'
     context = _build_context(instance.section_subject) or (instance.section.name if instance.section_id else '')
     body = context
     if instance.scheduled_at:
         schedule_text = instance.scheduled_at.strftime('%b %d, %Y %I:%M %p')
         body = f"{context} • {schedule_text}" if context else schedule_text
+    events = []
     for user_id in _student_user_ids_by_section(instance.section):
         notification = Notification.objects.create(
             user_id=user_id,
@@ -128,7 +134,8 @@ def notify_attendance_session(sender, instance, created, **kwargs):
             target_id=instance.id,
             section_subject=instance.section_subject,
         )
-        push_notification(user_id, serialize_notification(notification))
+        events.append((user_id, serialize_notification(notification)))
+    push_notifications(events)
 
 
 @receiver(post_save, sender=AssignmentSubmission)
@@ -149,10 +156,11 @@ def notify_assignment_submission(sender, instance, created, **kwargs):
 def notify_quiz_submission(sender, instance, created, update_fields=None, **kwargs):
     if not instance.submitted_at:
         return
-    if not created:
-        previous = getattr(instance, '_previous_submitted_at', None)
-        if previous is not None:
-            return
+    # Bug 5 fix: use DB-cached previous value reliably; only fire when submitted_at
+    # transitions from None -> a value (i.e. first submission)
+    previous = getattr(instance, '_previous_submitted_at', None)
+    if not created and previous is not None:
+        return
     quiz = instance.quiz
     student_name = instance.student.user.get_full_name() if instance.student_id else 'A student'
     context = _build_context(quiz.section_subject)

@@ -2,7 +2,7 @@ from datetime import datetime
 from django.utils.dateparse import parse_datetime
 from django.utils import timezone
 from rest_framework import status, viewsets
-from django.db.models import Q, Count
+from django.db.models import Q, Count, OuterRef, Subquery
 from django.utils.text import slugify as dj_slugify
 import uuid
 from rest_framework.response import Response
@@ -180,6 +180,35 @@ class ChatConversationDeleteView(APIView):
         membership.save(update_fields=['is_hidden', 'cleared_at'])
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ChatRoomAccessView(APIView):
+    permission_classes = [ChatServerOnly]
+
+    def get(self, request):
+        room_key = request.query_params.get('room_key')
+        user_id = request.query_params.get('user_id')
+
+        if not room_key or not user_id:
+            return Response({'error': 'room_key and user_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = CustomUser.objects.get(id=user_id, is_active=True)
+        except CustomUser.DoesNotExist:
+            return Response({'allowed': False}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            room = get_or_create_room(room_key)
+        except ValueError as exc:
+            return Response({'error': str(exc), 'allowed': False}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                'allowed': user_can_access_room(user, room),
+                'room_type': room.room_type,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ChatMessageViewSet(viewsets.ViewSet):
@@ -422,22 +451,26 @@ class ChatContactsView(APIView):
 
         # If no query and not listing all, show only users with existing conversations.
         if not query and not all_users:
+            allowed_contact_ids = {str(contact_id) for contact_id in allowed_contacts.values_list('id', flat=True)}
+            latest_message_subquery = (
+                ChatMessage.objects.filter(room=OuterRef('room'))
+                .order_by('-sent_at')
+                .values('sent_at')[:1]
+            )
             member_rooms = (
                 ChatRoomMember.objects
                 .select_related('room')
                 .filter(user=user, room__room_type=ChatRoom.RoomType.DIRECT)
+                .annotate(latest_message_sent_at=Subquery(latest_message_subquery))
             )
             other_user_ids = []
             for membership in member_rooms:
                 room = membership.room
-                last_message = ChatMessage.objects.filter(room=room).order_by('-sent_at').first()
-                if not last_message:
+                last_message_sent_at = membership.latest_message_sent_at
+                if not last_message_sent_at:
                     continue
-                if membership.cleared_at and last_message.sent_at <= membership.cleared_at:
+                if membership.cleared_at and last_message_sent_at <= membership.cleared_at:
                     continue
-                if membership.is_hidden:
-                    membership.is_hidden = False
-                    membership.save(update_fields=['is_hidden'])
                 room_key = room.room_key
                 if room_key.startswith('dm:'):
                     parts = room_key.split(':')
@@ -445,7 +478,7 @@ class ChatContactsView(APIView):
                         a = parts[1]
                         b = parts[2]
                         other_id = a if str(user.id) != a else b
-                        if allowed_contacts.filter(id=other_id).exists():
+                        if other_id in allowed_contact_ids:
                             other_user_ids.append(other_id)
             if other_user_ids:
                 contacts = CustomUser.objects.filter(id__in=other_user_ids).exclude(id=user.id)

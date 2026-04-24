@@ -6,7 +6,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Notification
 from .serializers import NotificationSerializer
-from .utils import push_notification, push_notification_delete, serialize_notification
+from .utils import (
+    push_notification,
+    push_notification_delete,
+    push_notifications,
+    serialize_notification,
+)
 
 
 class NotificationPagination(PageNumberPagination):
@@ -43,8 +48,12 @@ class NotificationViewSet(
         if mark_all:
             target_ids = list(queryset.values_list('id', flat=True))
             updated = queryset.update(is_read=True, read_at=timezone.now())
-            for notification in Notification.objects.filter(user=request.user, id__in=target_ids):
-                push_notification(request.user.id, serialize_notification(notification))
+            push_notifications(
+                [
+                    (request.user.id, serialize_notification(notification))
+                    for notification in Notification.objects.filter(user=request.user, id__in=target_ids)
+                ]
+            )
             return Response({'updated': updated})
         if isinstance(ids, str):
             ids = [ids]
@@ -52,8 +61,12 @@ class NotificationViewSet(
             return Response({'error': 'ids are required'}, status=status.HTTP_400_BAD_REQUEST)
         target_ids = list(queryset.filter(id__in=ids).values_list('id', flat=True))
         updated = queryset.filter(id__in=target_ids).update(is_read=True, read_at=timezone.now())
-        for notification in Notification.objects.filter(user=request.user, id__in=target_ids):
-            push_notification(request.user.id, serialize_notification(notification))
+        push_notifications(
+            [
+                (request.user.id, serialize_notification(notification))
+                for notification in Notification.objects.filter(user=request.user, id__in=target_ids)
+            ]
+        )
         return Response({'updated': updated})
 
     @action(detail=False, methods=['post'])

@@ -16,22 +16,18 @@ def serialize_notification(notification):
     }
 
 
-def _publish_notification_event(user_id, event_type, data):
+def _publish_notification_events(events):
     endpoint = getattr(settings, 'CHAT_SERVER_HTTP_URL', '').rstrip('/')
     token = getattr(settings, 'CHAT_SERVER_TOKEN', '')
     if not endpoint or not token:
         return
+    if not events:
+        return
 
     try:
         requests.post(
-            f"{endpoint}/internal/notifications/",
-            json={
-                'user_id': str(user_id),
-                'payload': {
-                    'type': event_type,
-                    'data': data,
-                },
-            },
+            f"{endpoint}/internal/notifications/bulk/",
+            json={'events': events},
             headers={'Authorization': f'Bearer {token}'},
             timeout=5,
         )
@@ -40,11 +36,44 @@ def _publish_notification_event(user_id, event_type, data):
 
 
 def push_notification(user_id, payload):
-    _publish_notification_event(user_id, 'notification', payload)
+    push_notifications([(user_id, payload)])
+
+
+def push_notifications(events):
+    normalized = [
+        {
+            'user_id': str(user_id),
+            'payload': {
+                'type': 'notification',
+                'data': payload,
+            },
+        }
+        for user_id, payload in events
+        if user_id and payload
+    ]
+    _publish_notification_events(normalized)
+
+
+def push_notification_deletes(events):
+    normalized_events = []
+    for user_id, ids in events:
+        normalized_ids = [str(notification_id) for notification_id in ids if notification_id]
+        if not user_id or not normalized_ids:
+            continue
+        normalized_events.append(
+            {
+                'user_id': str(user_id),
+                'payload': {
+                    'type': 'notification_deleted',
+                    'data': {'ids': normalized_ids},
+                },
+            }
+        )
+    _publish_notification_events(normalized_events)
 
 
 def push_notification_delete(user_id, ids):
     normalized_ids = [str(notification_id) for notification_id in ids if notification_id]
     if not normalized_ids:
         return
-    _publish_notification_event(user_id, 'notification_deleted', {'ids': normalized_ids})
+    push_notification_deletes([(user_id, normalized_ids)])
