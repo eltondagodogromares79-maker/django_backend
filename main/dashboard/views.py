@@ -327,6 +327,10 @@ class StudentPerformanceView(APIView):
                         'student_name': student.user.get_full_name(),
                         'student_number': student.student_number,
                         'gender': student.user.gender if hasattr(student.user, 'gender') else None,
+                        'phone_number': student.user.phone_number or None,
+                        'emergency_contact_name': student.emergency_contact_name or None,
+                        'emergency_contact_phone': student.emergency_contact_phone or None,
+                        'emergency_contact_relationship': student.emergency_contact_relationship or None,
                         'assignments': {
                             'missing': assignment_missing,
                             'submitted': assignment_submitted,
