@@ -166,6 +166,8 @@ class StudentSubjectSerializer(serializers.ModelSerializer):
     subject_code = serializers.CharField(source='section_subject.subject.code', read_only=True)
     subject_name = serializers.CharField(source='section_subject.subject.name', read_only=True)
     teacher_name = serializers.SerializerMethodField()
+    schedule_days = serializers.CharField(source='section_subject.schedule_days', read_only=True)
+    schedule_time = serializers.CharField(source='section_subject.schedule_time', read_only=True)
     section_subject = serializers.PrimaryKeyRelatedField(
         queryset=SectionSubject.objects.all(),
         write_only=True
@@ -178,7 +180,7 @@ class StudentSubjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StudentSubject
-        fields = ['id', 'enrollment', 'section_subject', 'subject', 'subject_code', 'subject_name', 'teacher_name', 'school_year']
+        fields = ['id', 'enrollment', 'section_subject', 'subject', 'subject_code', 'subject_name', 'teacher_name', 'schedule_days', 'schedule_time', 'school_year']
         read_only_fields = ['id', 'school_year']
 
     def get_teacher_name(self, obj):
