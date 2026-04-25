@@ -232,13 +232,14 @@ class StudentPerformanceView(APIView):
             student__in=students,
         ).select_related('assignment', 'student')
 
-        submissions_by_student = {}
+        submissions_by_student_ss = {}
         submission_scores_by_student_ss = {}
         for submission in submissions:
             student_id = str(submission.student_id)
             assignment_id = str(submission.assignment_id)
             ss_id = str(submission.assignment.section_subject_id)
-            submissions_by_student.setdefault(student_id, set()).add(assignment_id)
+            # Bug 3 fix: key by (student_id, ss_id) so submissions are scoped per subject
+            submissions_by_student_ss.setdefault((student_id, ss_id), set()).add(assignment_id)
             if submission.score is not None:
                 submission_scores_by_student_ss.setdefault((student_id, ss_id), []).append(float(submission.score))
 
@@ -301,15 +302,20 @@ class StudentPerformanceView(APIView):
                     student_id = str(student.id)
                     assignments_list = assignments_by_ss.get(ss_id, [])
                     quizzes_list = quizzes_by_ss.get(ss_id, [])
-                    submitted_ids = submissions_by_student.get(student_id, set())
+                    # Bug 3 fix: use scoped submitted ids per (student, section_subject)
+                    submitted_ids = submissions_by_student_ss.get((student_id, ss_id), set())
                     assignment_total = len(assignments_list)
-                    assignment_missing = len([a for a in assignments_list if a.due_date and a.due_date < now and str(a.id) not in submitted_ids])
+                    # Bug 1 & 2 fix: count actual submissions, and treat no-due-date assignments
+                    # as missing too (student hasn't submitted = missing regardless of due date)
+                    assignment_submitted = len([a for a in assignments_list if str(a.id) in submitted_ids])
+                    assignment_missing = assignment_total - assignment_submitted
                     assignment_scores = submission_scores_by_student_ss.get((student_id, ss_id), [])
                     assignment_avg = round(sum(assignment_scores) / len(assignment_scores), 1) if assignment_scores else None
 
                     attempted_quiz_ids = attempts_by_student_ss.get((student_id, ss_id), set())
                     quiz_total = len(quizzes_list)
-                    quiz_missing = len([q for q in quizzes_list if q.due_date and q.due_date < now and str(q.id) not in attempted_quiz_ids])
+                    # Bug 2 fix: count all unattempted quizzes as missing, not just past-due ones
+                    quiz_missing = quiz_total - len(attempted_quiz_ids)
                     quiz_scores = quiz_scores_by_student_ss.get((student_id, ss_id), [])
                     quiz_avg = round(sum(quiz_scores) / len(quiz_scores), 1) if quiz_scores else None
 
@@ -323,7 +329,7 @@ class StudentPerformanceView(APIView):
                         'gender': student.user.gender if hasattr(student.user, 'gender') else None,
                         'assignments': {
                             'missing': assignment_missing,
-                            'submitted': assignment_total - assignment_missing,
+                            'submitted': assignment_submitted,
                             'total': assignment_total,
                             'average_score': assignment_avg,
                         },
@@ -359,12 +365,13 @@ class StudentPerformanceView(APIView):
                         ss_id = str(ss.id)
                         assignments_list = assignments_by_ss.get(ss_id, [])
                         quizzes_list = quizzes_by_ss.get(ss_id, [])
-                        submitted_ids = submissions_by_student.get(student_id, set())
-                        assignment_missing = len([a for a in assignments_list if a.due_date and a.due_date < now and str(a.id) not in submitted_ids])
+                        submitted_ids = submissions_by_student_ss.get((student_id, ss_id), set())
+                        assignment_submitted = len([a for a in assignments_list if str(a.id) in submitted_ids])
+                        assignment_missing = len(assignments_list) - assignment_submitted
                         assignment_scores = submission_scores_by_student_ss.get((student_id, ss_id), [])
                         assignment_avg = round(sum(assignment_scores) / len(assignment_scores), 1) if assignment_scores else None
                         attempted_quiz_ids = attempts_by_student_ss.get((student_id, ss_id), set())
-                        quiz_missing = len([q for q in quizzes_list if q.due_date and q.due_date < now and str(q.id) not in attempted_quiz_ids])
+                        quiz_missing = len(quizzes_list) - len(attempted_quiz_ids)
                         quiz_scores = quiz_scores_by_student_ss.get((student_id, ss_id), [])
                         quiz_avg = round(sum(quiz_scores) / len(quiz_scores), 1) if quiz_scores else None
                         violations = violations_by_student_ss.get((student_id, ss_id), 0)
@@ -528,3 +535,46 @@ class PublicStatsView(APIView):
             'students': students_count,
             'subjects': subjects_count,
         })
+
+
+class TeacherStudentsView(APIView):
+    """Returns only students that belong to the requesting teacher's assigned subjects/sections."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.role not in ['instructor', 'adviser', 'teacher']:
+            return Response([], status=200)
+
+        if user.role == 'adviser':
+            # Adviser owns sections directly
+            sections = Section.objects.filter(adviser__user=user)
+            enrollments = Enrollment.objects.filter(
+                section__in=sections, is_current=True, status='enrolled'
+            ).select_related('student__user')
+        else:
+            # Instructor — scoped to their section subjects
+            section_subjects = SectionSubject.objects.filter(
+                Q(instructor__user=user) | Q(adviser__user=user)
+            )
+            enrollments = Enrollment.objects.filter(
+                section__in=section_subjects.values_list('section_id', flat=True),
+                is_current=True,
+                status='enrolled',
+            ).select_related('student__user')
+
+        seen = set()
+        students = []
+        for enrollment in enrollments:
+            student = enrollment.student
+            if str(student.id) in seen:
+                continue
+            seen.add(str(student.id))
+            students.append({
+                'id': str(student.id),
+                'user': str(student.user_id),
+                'user_name': student.user.get_full_name(),
+                'student_number': student.student_number,
+            })
+
+        return Response(students)
