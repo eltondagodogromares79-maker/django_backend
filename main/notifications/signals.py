@@ -110,32 +110,64 @@ def notify_quiz(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=AttendanceSession)
 def notify_attendance_session(sender, instance, created, **kwargs):
-    # Bug 4 fix: only notify when the session goes live, not on creation
-    if not instance.is_live:
-        return
-    if getattr(instance, 'is_online_class', False):
-        title = instance.title or 'Online class started'
-        kind = 'online_class'
-    else:
-        title = instance.title or 'Attendance session started'
-        kind = 'attendance'
     context = _build_context(instance.section_subject) or (instance.section.name if instance.section_id else '')
     body = context
     if instance.scheduled_at:
         schedule_text = instance.scheduled_at.strftime('%b %d, %Y %I:%M %p')
         body = f"{context} • {schedule_text}" if context else schedule_text
+
     events = []
-    for user_id in _student_user_ids_by_section(instance.section):
-        notification = Notification.objects.create(
-            user_id=user_id,
-            kind=kind,
-            title=title,
-            body=body,
-            target_id=instance.id,
-            section_subject=instance.section_subject,
-        )
-        events.append((user_id, serialize_notification(notification)))
-    push_notifications(events)
+
+    if created:
+        # Notify on creation for both regular and online sessions
+        if instance.is_online_class:
+            title = instance.title or 'Online class scheduled'
+            kind = 'online_class'
+        else:
+            title = instance.title or 'New class session scheduled'
+            kind = 'attendance'
+        for user_id in _student_user_ids_by_section(instance.section):
+            notification = Notification.objects.create(
+                user_id=user_id,
+                kind=kind,
+                title=title,
+                body=body,
+                target_id=instance.id,
+                section_subject=instance.section_subject,
+            )
+            events.append((user_id, serialize_notification(notification)))
+        push_notifications(events)
+        return
+
+    # Notify again when online class goes live (teacher hits Start)
+    if instance.is_online_class and instance.is_live:
+        previous_live = getattr(instance, '_previous_is_live', None)
+        if previous_live is False:
+            title = instance.title or 'Online class is now live'
+            live_body = f"{context} • Join now" if context else 'Join now'
+            live_events = []
+            for user_id in _student_user_ids_by_section(instance.section):
+                notification = Notification.objects.create(
+                    user_id=user_id,
+                    kind='online_class',
+                    title=title,
+                    body=live_body,
+                    target_id=instance.id,
+                    section_subject=instance.section_subject,
+                )
+                live_events.append((user_id, serialize_notification(notification)))
+            push_notifications(live_events)
+
+
+@receiver(pre_save, sender=AttendanceSession)
+def cache_attendance_session_previous(sender, instance, **kwargs):
+    if not instance.pk:
+        instance._previous_is_live = None
+        return
+    try:
+        instance._previous_is_live = AttendanceSession.objects.filter(pk=instance.pk).values_list('is_live', flat=True).first()
+    except Exception:
+        instance._previous_is_live = None
 
 
 @receiver(post_save, sender=AssignmentSubmission)
