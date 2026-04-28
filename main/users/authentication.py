@@ -3,11 +3,14 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 class CookieJWTAuthentication(JWTAuthentication):
     def authenticate(self, request):
-        token = request.COOKIES.get("access_token")
+        auth_header = request.headers.get("Authorization", "")
+        token = None
+
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+
         if token is None:
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.lower().startswith("bearer "):
-                token = auth_header.split(" ", 1)[1].strip()
+            token = request.COOKIES.get("access_token")
 
         if not token:
             return None

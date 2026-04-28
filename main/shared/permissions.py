@@ -21,6 +21,12 @@ class IsStudentOrTeacherOrAdmin(permissions.BasePermission):
 
 class IsOwnerOrTeacherOrAdmin(permissions.BasePermission):
     """Permission for object owner, instructors/advisers, admins, principals, and deans"""
+    def has_permission(self, request, view):
+        return (
+            request.user.is_authenticated and
+            request.user.role in ['student', 'instructor', 'adviser', 'admin', 'principal', 'dean']
+        )
+
     def has_object_permission(self, request, view, obj):
         if request.user.role in ['admin', 'principal', 'dean']:
             return True

@@ -616,6 +616,8 @@ class QuizAttemptViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        if not user.is_authenticated:
+            return QuizAttempt.objects.none()
         if user.role == 'student':
             return QuizAttempt.objects.filter(student__user=user)
         if user.role in ['instructor', 'adviser']:
